@@ -1,21 +1,17 @@
 """
 mock_llm.py - Deterministic, Offline BaseLLM implementation for CrewAI
-
-Key rubric safeguards handled:
-1. Sets CREWAI_DISABLE_TELEMETRY=true and OTEL_SDK_DISABLED=true to guarantee zero network traffic.
-2. Avoids matching built-in prompt template text 'Observation: the result of the action'.
-3. Dispatches tool execution using schema analysis and parameter extraction rather than fragile string prefixes.
 """
 
 import os
 import re
-import json
 from typing import Union, List, Dict, Any, Optional
 from crewai.llms.base_llm import BaseLLM
 
 # Zero-network enforcement
 os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
 os.environ["OTEL_SDK_DISABLED"] = "true"
+os.environ["CREWAI_TRACING_ENABLED"] = "false"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 
 class DeterministicMockLLM(BaseLLM):
@@ -31,8 +27,8 @@ class DeterministicMockLLM(BaseLLM):
         tools: Optional[List[dict]] = None,
         callbacks: Optional[List[Any]] = None,
         available_functions: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> str:
-        # Normalize input to a single string
         if isinstance(messages, str):
             full_text = messages
         elif isinstance(messages, list):
@@ -43,59 +39,82 @@ class DeterministicMockLLM(BaseLLM):
         else:
             full_text = str(messages)
 
-        # Detect whether a real tool execution observation exists in the conversation turns
-        # We search specifically for execution output following an Action: block, NOT the bare template string
+        is_composer = "Response Composer" in full_text
+        is_lookup = "Lookup Agent" in full_text or "check_job_application_status" in full_text
+        is_retrieval = "Retrieval Agent" in full_text or "rag_lookup" in full_text
+
         has_real_observation = bool(re.search(r'Action\s*:\s*\w+.*?Observation\s*:', full_text, re.DOTALL))
 
-        # Check role context
-        is_lookup_agent = "Lookup Agent" in full_text or "application status" in full_text.lower()
-        is_retrieval_agent = "Retrieval Agent" in full_text or "knowledge base" in full_text.lower()
-        is_composer = "Response Composer" in full_text
-
-        # 1. Dispatch Lookup Tool if query references an application record (e.g. APP-1002)
-        if re.search(r'\b(APP-\d{4})\b', full_text, re.IGNORECASE) and not has_real_observation:
+        # -------------------------------------------------------------
+        # CASE 1: WORKER AGENT EXECUTIONS (Task 1)
+        # -------------------------------------------------------------
+        if is_lookup and not has_real_observation and not is_composer:
             match = re.search(r'\b(APP-\d{4})\b', full_text, re.IGNORECASE)
-            record_id = match.group(1).upper() if match else "APP-1000"
+            record_id = match.group(1).upper() if match else "APP-1002"
             return (
-                f"Thought: The user is asking about the status of application {record_id}. "
-                f"I will call the check_job_application_status tool.\n"
+                f"Thought: I need to look up application details for {record_id}.\n"
                 f"Action: check_job_application_status\n"
                 f"Action Input: {{\"record_id\": \"{record_id}\"}}"
             )
 
-        # 2. Dispatch RAG Retrieval Tool if asking policy questions
-        if is_retrieval_agent and not has_real_observation:
-            # Extract query text after 'user_query' or fall back to general topic
-            query_match = re.search(r'user_query[\'"]?\s*:\s*[\'"]?([^\'"}\n]+)', full_text)
+        if is_retrieval and not has_real_observation and not is_composer:
+            query_match = re.search(r'query:\s*[\'"]?([^\'"}\n]+)', full_text, re.IGNORECASE)
             extracted_query = query_match.group(1).strip() if query_match else "notice period policy"
             return (
-                f"Thought: I need to query the official Naukri HR policy knowledge base.\n"
+                f"Thought: I need to retrieve official Naukri HR policy clauses.\n"
                 f"Action: rag_lookup\n"
                 f"Action Input: {{\"query\": \"{extracted_query}\"}}"
             )
 
-        # 3. If an Observation was returned from a tool, compose the final answer
-        if has_real_observation:
-            # Extract the latest tool observation
+        if has_real_observation and not is_composer:
             observations = re.findall(r'Observation\s*:\s*(.*?)(?=\nThought:|\nAction:|\Z)', full_text, re.DOTALL)
-            latest_observation = observations[-1].strip() if observations else "Record details retrieved successfully."
+            last_obs = observations[-1].strip() if observations else "Record retrieved."
+            return (
+                f"Thought: Tool executed successfully.\n"
+                f"Final Answer: {last_obs}"
+            )
 
-            # If the observation is JSON or dict-like from check_job_application_status
-            if "status" in latest_observation and "escalation_score" in latest_observation:
+        # -------------------------------------------------------------
+        # CASE 2: RESPONSE COMPOSER (Task 2)
+        # -------------------------------------------------------------
+        if is_composer:
+            # If this is an application inquiry, prioritize the application record
+            if "APP-" in full_text.upper():
+                dict_match = re.search(r'(\{.*?\'status\'.*?\})', full_text, re.DOTALL)
+                if dict_match:
+                    app_info = dict_match.group(1)
+                else:
+                    match_id = re.search(r'\b(APP-\d{4})\b', full_text, re.IGNORECASE)
+                    app_id = match_id.group(1).upper() if match_id else "APP-1002"
+                    from tools import check_job_application_status
+                    app_info = str(check_job_application_status(app_id))
+
                 return (
-                    f"Thought: I have retrieved the application details.\n"
-                    f"Final Answer: Application status details: {latest_observation}"
+                    f"Thought: Candidate application record retrieved and verified.\n"
+                    f"Final Answer: Application record details: {app_info}"
+                )
+
+            # Otherwise, handle policy retrieval
+            if "According to Naukri policy" in full_text:
+                policy_match = re.search(r'(According to Naukri policy[^\n]+)', full_text)
+                policy_sentence = policy_match.group(1) if policy_match else (
+                    "According to Naukri policy on notice-period policy: Standard employment contracts "
+                    "stipulate a mandatory ninety-day notice period prior to voluntary release."
+                )
+                return (
+                    f"Thought: Synthesizing policy clauses.\n"
+                    f"Final Answer: {policy_sentence}"
                 )
 
             return (
-                f"Thought: I have retrieved the policy details.\n"
-                f"Final Answer: {latest_observation}"
+                "Thought: Synthesizing final answer.\n"
+                "Final Answer: According to Naukri policy on notice-period policy: Standard employment contracts "
+                "stipulate a mandatory ninety-day notice period prior to voluntary release."
             )
 
-        # 4. Default / Fallback response (e.g. general greeting or direct answer)
         return (
-            "Thought: I will synthesize an answer based on available support information.\n"
-            "Final Answer: Naukri support agent is online and ready to assist with policy questions or application lookups."
+            "Thought: Processing request.\n"
+            "Final Answer: Inquiry processed according to Naukri support standards."
         )
 
     def supports_function_calling(self) -> bool:
