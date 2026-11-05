@@ -1,0 +1,22 @@
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+
+# ChromaDB / Vector Store Artifacts
+chroma_db/
+*.sqlite3
+
+# Logs & Audit Dumps
+*.log
+agent_audit.jsonl
+
+# OS Artifacts
+.DS_Store
+Thumbs.db
