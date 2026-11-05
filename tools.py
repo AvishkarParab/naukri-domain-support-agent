@@ -12,7 +12,12 @@ Threshold:
 
 from typing import Dict, Any, List
 from dataset import JOB_APPLICATIONS
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
+
+ESCALATION_THRESHOLD = float(os.getenv("ESCALATION_THRESHOLD", "0.70"))
 
 def check_job_application_status(record_id: str) -> Dict[str, Any]:
     """
@@ -39,7 +44,7 @@ def check_job_application_status(record_id: str) -> Dict[str, Any]:
 
     # Combined continuous escalation score
     escalation_score = round(flag_signal + recency_signal, 3)
-    recommend_escalation = escalation_score >= 0.70
+    recommend_escalation = escalation_score >= ESCALATION_THRESHOLD
 
     return {
         "found": True,

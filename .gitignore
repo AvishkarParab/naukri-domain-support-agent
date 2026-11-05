@@ -1,22 +1,41 @@
-# Virtual Environment
-venv/
-ENV/
-env/
-
-# Python Cache
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-*.pytest_cache/
 
-# ChromaDB / Vector Store Artifacts
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Environment Variables & Secrets
+.env
+.env.local
+*.env
+
+# ChromaDB & Vector Store Artifacts
 chroma_db/
+.chromadb/
 *.sqlite3
 
 # Logs & Audit Dumps
 *.log
 agent_audit.jsonl
 
-# OS Artifacts
+# Testing & Cache Artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.cache/
+
+# OS-Specific Files
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# IDE & Editor Settings
+.vscode/
+.idea/
+*.swp
+*.swo

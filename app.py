@@ -15,10 +15,18 @@ from rag_engine import sentence_collection
 from guardrails import mask_pii, AgentResponseSchema
 from cache import RESPONSE_CACHE, enforce_runtime_budget, BudgetExceededException
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Configure ELK-style JSON-Lines Structured Logger (Task 12)
 logger = logging.getLogger("naukri_audit")
 logger.setLevel(logging.INFO)
-log_handler = logging.FileHandler("agent_audit.jsonl", encoding="utf-8")
+
+AUDIT_LOG_PATH = os.getenv("AUDIT_LOG_PATH", "agent_audit.jsonl")
+
+log_handler = logging.FileHandler(AUDIT_LOG_PATH, encoding="utf-8")
 log_handler.setFormatter(logging.Formatter('%(message)s'))
 if not logger.handlers:
     logger.addHandler(log_handler)

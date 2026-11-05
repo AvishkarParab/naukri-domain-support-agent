@@ -10,7 +10,10 @@ Key rubric requirements:
 import time
 import re
 from typing import Dict, Optional, Tuple, Any
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
 # --- Task 15: Runtime Layer Token/Cost Budget Enforcement ---
 
@@ -20,7 +23,7 @@ class BudgetExceededException(Exception):
 
 
 # Per-request token cap (e.g., 350 tokens)
-MAX_TOKEN_BUDGET_PER_REQUEST = 350
+MAX_TOKEN_BUDGET_PER_REQUEST = int(os.getenv("MAX_TOKEN_BUDGET_PER_REQUEST", "350"))
 
 
 def estimate_token_count(text: str) -> int:
