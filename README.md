@@ -91,7 +91,7 @@ $$\mathcal{T}_{\text{estimated}}(q) = \lfloor |W_q| \times 1.3 \rfloor$$
 Where:
 
 - $|W_q|$ is the whitespace-delimited word count of query $q$.
-- Budget Invariant: $\mathcal{T}_{\text{estimated}}(q) \le \text{MAX\_TOKEN\_BUDGET\_PER\_REQUEST} = 350$.
+- Budget Invariant: $\mathcal{T}_{\text{estimated}}(q) \le$ `MAX_TOKEN_BUDGET_PER_REQUEST` $(350)$.
 - Violation triggers immediate dispatch abort via `BudgetExceededException`.
 
 ### C. Cache Latency Reduction Metric
