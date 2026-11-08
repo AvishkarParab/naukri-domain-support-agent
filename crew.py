@@ -2,6 +2,7 @@ import os
 import re
 from typing import Dict, List
 import asyncio
+import concurrent.futures
 from review_team import run_review_stage
 
 os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
@@ -137,6 +138,22 @@ def build_naukri_crew(is_lookup: bool) -> Crew:
         verbose=False,
     )
 
+def run_async_safely(coro):
+    """
+    Safely executes an async coroutine from synchronous code,
+    preventing 'RuntimeError: This event loop is already running'
+    when invoked inside FastAPI or active asyncio event loops.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    else:
+        return asyncio.run(coro)
 
 def run_orchestrated_query(query: str, session_id: str = "default_session") -> AgentResponseSchema:
     sanitized_query = mask_pii(query)
@@ -172,7 +189,7 @@ def run_orchestrated_query(query: str, session_id: str = "default_session") -> A
 
     if not is_lookup and "insufficient information" not in composer_draft.lower():
         try:
-            verdict = asyncio.run(run_review_stage(composer_draft, enriched_query))
+            verdict = run_async_safely(run_review_stage(composer_draft, enriched_query))
             raw_answer = verdict.final_answer
         except Exception:
             raw_answer = composer_draft
