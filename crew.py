@@ -1,6 +1,8 @@
 import os
 import re
-from typing import Dict, Any, List
+from typing import Dict, List
+import asyncio
+from review_team import run_review_stage
 
 os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
 os.environ["OTEL_SDK_DISABLED"] = "true"
@@ -166,7 +168,16 @@ def run_orchestrated_query(query: str, session_id: str = "default_session") -> A
 
     crew = build_naukri_crew(is_lookup=is_lookup)
     raw_output = crew.kickoff(inputs={"user_query": enriched_query})
-    raw_answer = str(raw_output).strip()
+    composer_draft = str(raw_output).strip()
+
+    if not is_lookup and "insufficient information" not in composer_draft.lower():
+        try:
+            verdict = asyncio.run(run_review_stage(composer_draft, enriched_query))
+            raw_answer = verdict.final_answer
+        except Exception:
+            raw_answer = composer_draft
+    else:
+        raw_answer = composer_draft
 
     sources: List[str] = []
     if is_lookup or "APP-" in raw_answer:
