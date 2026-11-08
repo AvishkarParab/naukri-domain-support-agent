@@ -2,20 +2,19 @@
 cache.py - Response Caching (Task 16) & Runtime Budget Enforcement (Task 15)
 
 Key rubric requirements:
-1. Normalized in-memory cache keyed by query text.
+1. Normalized in-memory cache keyed by query text with LRU eviction and TTL.
 2. Demonstrates before/after evidence (cache hit counter & timing comparison).
 3. Runtime token/cost budget cap rejecting oversized requests with an explicit error.
 """
 
 import time
 import re
+from collections import OrderedDict
 from typing import Dict, Optional, Tuple, Any
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
-# --- Task 15: Runtime Layer Token/Cost Budget Enforcement ---
 
 class BudgetExceededException(Exception):
     """Raised when a request exceeds the per-request token budget cap."""
@@ -46,15 +45,20 @@ def enforce_runtime_budget(query: str, max_budget: int = MAX_TOKEN_BUDGET_PER_RE
     return estimated_tokens
 
 
-# --- Task 16: Normalized In-Memory Response Cache ---
 
 class GroundedResponseCache:
     """
-    In-memory response cache keyed by normalized query text.
-    Tracks hits, misses, and execution timings.
+    Production-grade in-memory response cache keyed by normalized query text.
+    Features:
+    - O(1) LRU (Least Recently Used) eviction policy with max_capacity.
+    - Time-to-Live (TTL) expiration per entry.
+    - Normalized key hashing (case, whitespace, punctuation).
+    - Cache hit/miss accounting.
     """
-    def __init__(self):
-        self._store: Dict[str, Any] = {}
+    def __init__(self, max_capacity: int = 250, ttl_seconds: int = 86400):
+        self._store: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self.max_capacity = max_capacity
+        self.ttl_seconds = ttl_seconds
         self.hits: int = 0
         self.misses: int = 0
 
@@ -67,18 +71,35 @@ class GroundedResponseCache:
     def get(self, query: str) -> Optional[Any]:
         key = self.normalize_key(query)
         if key in self._store:
-            self.hits += 1
-            return self._store[key]
+            entry = self._store[key]
+            # Check TTL
+            if time.time() - entry["timestamp"] <= self.ttl_seconds:
+                self.hits += 1
+                self._store.move_to_end(key)  # Mark as recently accessed
+                return entry["value"]
+            else:
+                # Expired
+                del self._store[key]
+
         self.misses += 1
         return None
 
     def set(self, query: str, response: Any) -> None:
         key = self.normalize_key(query)
-        self._store[key] = response
+        if key in self._store:
+            self._store.move_to_end(key)
+        self._store[key] = {
+            "value": response,
+            "timestamp": time.time()
+        }
+        # LRU Eviction when capacity limit is reached
+        if len(self._store) > self.max_capacity:
+            self._store.popitem(last=False)
 
     def stats(self) -> Dict[str, int]:
         return {
             "total_entries": len(self._store),
+            "max_capacity": self.max_capacity,
             "hits": self.hits,
             "misses": self.misses,
         }
@@ -89,7 +110,7 @@ class GroundedResponseCache:
         self.misses = 0
 
 
-RESPONSE_CACHE = GroundedResponseCache()
+RESPONSE_CACHE = GroundedResponseCache(max_capacity=250, ttl_seconds=86400)
 
 
 if __name__ == "__main__":
@@ -97,7 +118,6 @@ if __name__ == "__main__":
     print("      TASK 15 & 16: BUDGET ENFORCEMENT & CACHING        ")
     print("========================================================")
 
-    # Demo 1: Task 15 Runtime Budget Cap
     print("\n--- 1. RUNTIME BUDGET CAP ENFORCEMENT ---")
     valid_query = "What is the notice period policy for permanent employees?"
     tokens = enforce_runtime_budget(valid_query)
@@ -115,11 +135,10 @@ if __name__ == "__main__":
     print("\n--- 2. RESPONSE CACHING & TIMING DEMO ---")
     sample_query = "What is the standard notice period duration?"
 
-    # Turn 1: Cache Miss (Simulated tool execution)
+    # Turn 1: Cache Miss
     t0 = time.perf_counter()
     cached_val = RESPONSE_CACHE.get(sample_query)
     if cached_val is None:
-        # Simulate processing delay
         time.sleep(0.05)
         computed_answer = "Standard employment agreements stipulate a mandatory ninety-day notice period."
         RESPONSE_CACHE.set(sample_query, computed_answer)
@@ -129,7 +148,7 @@ if __name__ == "__main__":
     print(f"  Result : {computed_answer}")
     print(f"  Latency: {t_miss:.3f} ms | Cache Stats: {RESPONSE_CACHE.stats()}")
 
-    # Turn 2: Cache Hit (With slight whitespace/punctuation variation)
+    # Turn 2: Cache Hit
     sample_query_variant = "  What is the standard notice period duration?  "
     t1 = time.perf_counter()
     hit_result = RESPONSE_CACHE.get(sample_query_variant)
