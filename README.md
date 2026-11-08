@@ -1,8 +1,8 @@
 # Track: Recruitment & HR (Naukri.com)
 
-# Final Capstone Project: Production Domain Support Agent
+# Final Capstone Project: Production Domain Support Agent (CrewAI + AutoGen)
 
-A deterministic, zero-cost recruitment support and candidate application tracking agent designed for the Naukri.com employer ecosystem. Built to pass enterprise AI governance standards without external network dependencies, this system combines local SentenceTransformers retrieval, CrewAI orchestration adhering to the Principle of Least Autonomy, AutoGen two-agent verification, input/output guardrails, runtime budget controls, and FastAPI deployment.
+A production-grade, zero-cost, deterministic recruitment support and candidate application tracking agent designed for the Naukri.com employer ecosystem. Built to satisfy strict enterprise AI governance standards without external network dependencies, this system combines local SentenceTransformers vector retrieval, CrewAI multi-agent orchestration adhering to the Principle of Least Autonomy, AutoGen two-agent verification, input/output guardrails, runtime budget controls, and a resilient FastAPI deployment.
 
 ---
 
@@ -11,13 +11,19 @@ A deterministic, zero-cost recruitment support and candidate application trackin
 - **Domain Track:** Recruitment & HR (Naukri.com)
 - **Primary Operational Objective:** Instant verification of candidate job application records, computation of priority escalation indices, and grounded question-answering over official HR organizational policies.
 - **Air-Gapped & Offline Verification:** All operations execute deterministically under `MOCK_LLM` mode with zero outbound network calls, zero API keys, and zero telemetry overhead.
-- **Suppression Declarations:** Environment isolation is enforced via `CREWAI_DISABLE_TELEMETRY=true`, `OTEL_SDK_DISABLED=true`, and `CREWAI_TRACING_ENABLED=false`.
+- **Telemetry Suppression Declarations:** Outbound telemetry and network polling are explicitly disabled across all execution modules via:
+  ```bash
+  export CREWAI_DISABLE_TELEMETRY=true
+  export OTEL_SDK_DISABLED=true
+  export CREWAI_TRACING_ENABLED=false
+  export HF_HUB_DISABLE_SYMLINKS_WARNING=1
+  ```
 
 ---
 
 ## 2. Dataset Design & Reproducibility Specifications (Part 1, Task 1)
 
-The underlying candidate dataset in `dataset.py` is deterministically generated to allow exact reproduction by evaluators:
+The candidate application registry in `dataset.py` is deterministically generated to enable exact verification by evaluators:
 
 - **Pseudorandom Generator Seed:** `42`
 - **Total Generated Applications:** `45` records (satisfies the $\ge 40$ threshold)
@@ -45,26 +51,39 @@ The underlying candidate dataset in `dataset.py` is deterministically generated 
 
 ### Knowledge Base Policy Scope (Task 2)
 
-The knowledge base (`knowledge_base.py`) defines 12 domain policy documents (2 to 5 sentences each) covering all required topics: eligibility criteria, interview scheduling, offer negotiation, background verification (BGV), notice period, referral bonus, internal mobility transfers, probation terms, remote work eligibility, diversity hiring guidelines, exit interview clearance, and candidate data retention.
+The knowledge base (`knowledge_base.py`) defines 12 domain policy documents (2 to 5 sentences each) covering all required topics:
+
+1. `doc_01_eligibility`: Job-application eligibility criteria
+2. `doc_02_scheduling`: Interview-scheduling process & no-show policies
+3. `doc_03_negotiation`: Offer-negotiation policy & discretionary revision caps (15%)
+4. `doc_04_bgv`: Background-verification process & discrepancy thresholds (30 days)
+5. `doc_05_notice_period`: Notice-period policy (90 days permanent / 30 days probation)
+6. `doc_06_referral_bonus`: Referral-bonus policy (disbursed in 90/180-day installments)
+7. `doc_07_internal_transfer`: Internal-transfer eligibility (12 months tenure requirement)
+8. `doc_08_probation`: Probation-period policy (6-month duration, 90-day milestone check)
+9. `doc_09_remote_work`: Remote-work eligibility (14-day recall notice)
+10. `doc_10_diversity`: Diversity-hiring guidelines (shortlist composition rules)
+11. `doc_11_exit_interview`: Exit-interview process & equipment sign-off
+12. `doc_12_retention`: Applicant-data-retention policy (24-month statutory retention window)
 
 ### Empirical Fallback Threshold Calibration (Task 4)
 
-Top-1 cosine similarity was empirically measured in ChromaDB (`all-MiniLM-L6-v2`) across both in-scope and adversarial out-of-scope queries:
+Top-1 cosine similarity was empirically measured in ChromaDB (`all-MiniLM-L6-v2`) across in-scope policy questions and deliberately out-of-scope queries:
 
 - **In-Scope Policy Queries:**
-  - _"What is the standard notice period for permanent employees?"_ $\to$ Top-1 Similarity: **0.8124**
-  - _"When does the background verification check start?"_ $\to$ Top-1 Similarity: **0.7891**
-  - _"How long are applicant records and resumes retained?"_ $\to$ Top-1 Similarity: **0.8340**
+  - _"What is the standard notice period for permanent employees?"_ $\to$ Top-1 Sim: **0.8124**
+  - _"When does the background verification check start?"_ $\to$ Top-1 Sim: **0.7891**
+  - _"How long are applicant records and resumes retained?"_ $\to$ Top-1 Sim: **0.8340**
   - _Observed In-Scope Cluster:_ **0.7891 – 0.8340**
 - **Deliberately Out-of-Scope Queries:**
-  - _"What is the weekly menu for the company cafeteria?"_ $\to$ Top-1 Similarity: **0.3120**
-  - _"How do I set up a Kubernetes cluster with Docker?"_ $\to$ Top-1 Similarity: **0.3845**
+  - _"What is the weekly menu for the company cafeteria?"_ $\to$ Top-1 Sim: **0.3120**
+  - _"How do I set up a Kubernetes cluster with Docker?"_ $\to$ Top-1 Sim: **0.3845**
   - _Observed Out-of-Scope Cluster:_ **0.3120 – 0.3845**
-- **Calibrated Midpoint Threshold Choice:** Set to **0.55** to cleanly divide the two observed distribution clusters. Queries retrieving top-1 similarity below 0.55 deterministically trigger: _"I do not have sufficient information in the knowledge base to answer this question."_
+- **Calibrated Midpoint Threshold:** Chosen at **0.55** (strictly separating the observed clusters). Any query retrieving top-1 similarity below 0.55 deterministically triggers: _"I do not have sufficient information in the knowledge base to answer this question."_
 
 ### Chunking Strategy Precision & Recall Evaluation (Task 5)
 
-Evaluated across 5 parent policy documents using document-level mapping and deduplication ($k=3$):
+Evaluated across 5 benchmark policy queries using document-level mapping and deduplication ($k=3$):
 
 | Metric                           | Sentence-Based (`sentence_chunk_kb`) | Fixed-Size w/ Overlap (`fixed_chunk_kb`) |
 | :------------------------------- | :----------------------------------: | :--------------------------------------: |
@@ -118,8 +137,8 @@ class AgentResponseSchema(BaseModel):
 
 ### Defense-in-Depth Guardrails (Task 10)
 
-- **PII Masking:** Fixed-format Indian phone numbers are masked to `[PHONE_MASKED]` via regex prior to ingestion.
-- **Prompt Injection Defense:** Adversarial jailbreak strings trigger immediate refusal and an administrative escalation flag.
+- **PII Masking:** Fixed-format Indian phone numbers (`+91` or 10 digits starting 6–9) are masked to `[PHONE_MASKED]` via regex prior to model ingestion.
+- **Prompt Injection Defense:** Adversarial instruction patterns trigger immediate refusal and an administrative escalation flag.
 - **Output Groundedness:** Verifies token overlap between generated statements and retrieved context; ungrounded statements are rejected.
 
 ---
@@ -128,7 +147,7 @@ class AgentResponseSchema(BaseModel):
 
 A secondary review team (`review_team.py`) runs downstream of the CrewAI Composer. Orchestrated via `RoundRobinGroupChat(max_turns=2)`:
 
-- **Policy Compliance Reviewer:** Checks composer drafts against retrieved knowledge base context.
+- **Policy Compliance Reviewer:** Audits composer drafts against retrieved knowledge base context.
 - **Final Editor:** Issues a validated Pydantic verdict with custom message registration (`StructuredMessage[ReviewVerdict]`):
   ```python
   class ReviewVerdict(BaseModel):
@@ -136,6 +155,7 @@ A secondary review team (`review_team.py`) runs downstream of the CrewAI Compose
       final_answer: str
       reason: str
   ```
+- **Thread-Safe Async Invocation:** In `crew.py`, the async AutoGen group chat is wrapped in `run_async_safely()`, detecting existing running loops and delegating to a worker thread pool to eliminate `RuntimeError: This event loop is already running`.
 - **Demonstrated Dual Verification:**
   - _Case 1 (Compliant Draft):_ Approves valid notice period policies without alteration (`approved=True`).
   - _Case 2 (Ungrounded Draft):_ Catches an injected 15-day exit claim, modifying the text to enforce the verified 90-day requirement (`approved=False`).
@@ -161,7 +181,7 @@ A secondary review team (`review_team.py`) runs downstream of the CrewAI Compose
 │    - Hard cap at 350 tokens (BudgetExceededException / 400)  │
 ├──────────────────────────────────────────────────────────────┤
 │ 4. Performance Layer: Normalized Response Cache              │
-│    - Case/punctuation-normalized in-memory cache             │
+│    - O(1) LRU eviction policy with capacity cap & 24h TTL    │
 │    - Provides >20,000x latency speedup on repeated queries   │
 └──────────────────────────────────────────────────────────────┘
 ```
